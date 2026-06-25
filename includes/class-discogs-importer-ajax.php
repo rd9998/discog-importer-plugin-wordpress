@@ -17,6 +17,7 @@ class Discogs_Importer_Ajax {
 		// Register AJAX Actions.
 		add_action( 'wp_ajax_discogs_importer_search', array( $this, 'ajax_search' ) );
 		add_action( 'wp_ajax_discogs_importer_import', array( $this, 'ajax_import' ) );
+		add_action( 'wp_ajax_discogs_importer_collection', array( $this, 'ajax_collection' ) );
 	}
 
 	/**
@@ -105,6 +106,76 @@ class Discogs_Importer_Ajax {
 	}
 
 	/**
+	 * Handle AJAX Collection Load.
+	 */
+	public function ajax_collection() {
+		check_ajax_referer( 'discogs_importer_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Permissions check failed.', 'discogs-importer' ) );
+		}
+
+		$username = get_option( 'discogs_importer_username', '' );
+		if ( empty( $username ) ) {
+			wp_send_json_error( __( 'Username is missing. Please configure it in Settings.', 'discogs-importer' ) );
+		}
+
+		$page = isset( $_POST['page'] ) ? absint( $_POST['page'] ) : 1;
+
+		$token = get_option( 'discogs_importer_token', '' );
+		if ( empty( $token ) ) {
+			wp_send_json_error( __( 'API Token is missing. Please configure it in Settings.', 'discogs-importer' ) );
+		}
+
+		$results = Discogs_Importer_API::get_collection( $username, $page, 12 );
+
+		if ( is_wp_error( $results ) ) {
+			wp_send_json_error( $results->get_error_message() );
+		}
+
+		// Transform collection response format to match search results format.
+		$transformed_results = array();
+		if ( ! empty( $results['releases'] ) && is_array( $results['releases'] ) ) {
+			foreach ( $results['releases'] as $item ) {
+				$info = isset( $item['basic_information'] ) ? $item['basic_information'] : array();
+				if ( empty( $info ) ) {
+					continue;
+				}
+
+				// Format artist strings.
+				$artists = array();
+				if ( ! empty( $info['artists'] ) && is_array( $info['artists'] ) ) {
+					foreach ( $info['artists'] as $art ) {
+						$artists[] = $art['name'];
+					}
+				}
+				$artist_title = ! empty( $artists ) ? implode( ' - ', $artists ) : 'Unknown Artist';
+
+				$transformed_results[] = array(
+					'id'          => isset( $info['id'] ) ? $info['id'] : 0,
+					'title'       => $artist_title . ' - ' . ( isset( $info['title'] ) ? $info['title'] : 'Untitled' ),
+					'thumb'       => isset( $info['thumb'] ) ? $info['thumb'] : '',
+					'cover_image' => isset( $info['cover_image'] ) ? $info['cover_image'] : '',
+					'year'        => isset( $info['year'] ) ? $info['year'] : '',
+					'country'     => isset( $info['country'] ) ? $info['country'] : 'N/A',
+					'genre'       => isset( $info['genres'] ) ? $info['genres'] : array(),
+					'style'       => isset( $info['styles'] ) ? $info['styles'] : array(),
+					'format'      => isset( $info['formats'][0]['name'] ) ? array( $info['formats'][0]['name'] ) : array(),
+					'label'       => isset( $info['labels'][0]['name'] ) ? array( $info['labels'][0]['name'] ) : array(),
+					'catno'       => isset( $info['labels'][0]['catno'] ) ? $info['labels'][0]['catno'] : '',
+				);
+			}
+		}
+
+		$response = array(
+			'pagination' => isset( $results['pagination'] ) ? $results['pagination'] : array(),
+			'results'    => $transformed_results,
+		);
+
+		wp_send_json_success( $response );
+	}
+
+	/**
 	 * Handle AJAX Import.
 	 */
 	public function ajax_import() {
@@ -135,6 +206,11 @@ class Discogs_Importer_Ajax {
 
 		$is_wc_active = class_exists( 'WooCommerce' );
 		$target_post_type = ( 'woocommerce' === $import_type && $is_wc_active ) ? 'product' : 'discogs_record';
+
+		// Ensure taxonomy is registered early for tracklist links.
+		if ( 'product' === $target_post_type ) {
+			$this->ensure_attribute_taxonomy( 'artist', __( 'Artist', 'discogs-importer' ) );
+		}
 
 		// Check if already imported.
 		$existing = new WP_Query( array(
@@ -211,7 +287,31 @@ class Discogs_Importer_Ajax {
 					$track_artists = array();
 					if ( ! empty( $track['artists'] ) && is_array( $track['artists'] ) ) {
 						foreach ( $track['artists'] as $art ) {
-							$track_artists[] = $this->clean_artist_name( $art['name'] );
+							$clean_name = $this->clean_artist_name( $art['name'] );
+							$taxonomy   = ( 'product' === $target_post_type ) ? 'pa_artist' : 'record_artist';
+
+							// Ensure term exists in taxonomy.
+							$term = get_term_by( 'name', $clean_name, $taxonomy );
+							if ( ! $term ) {
+								$term_info = wp_insert_term( $clean_name, $taxonomy );
+								if ( ! is_wp_error( $term_info ) && isset( $term_info['term_id'] ) ) {
+									$term = get_term( $term_info['term_id'], $taxonomy );
+								}
+							}
+
+							$link = '';
+							if ( $term && ! is_wp_error( $term ) ) {
+								$term_link = get_term_link( $term, $taxonomy );
+								if ( ! is_wp_error( $term_link ) ) {
+									$link = $term_link;
+								}
+							}
+
+							if ( ! empty( $link ) ) {
+								$track_artists[] = '<a href="' . esc_url( $link ) . '" class="track-artist-link" style="color: var(--discogs-primary, #10b981); text-decoration: none; font-weight: 600;">' . esc_html( $clean_name ) . '</a>';
+							} else {
+								$track_artists[] = '<span class="track-artist-name" style="font-weight: 600;">' . esc_html( $clean_name ) . '</span>';
+							}
 						}
 					}
 					$track_artist_str = ! empty( $track_artists ) ? implode( ' & ', $track_artists ) : '';
@@ -219,7 +319,7 @@ class Discogs_Importer_Ajax {
 					// Format the display title.
 					$display_title = esc_html( $track['title'] );
 					if ( ! empty( $track_artist_str ) ) {
-						$display_title = '<span class="track-artist" style="font-weight: 600;">' . esc_html( $track_artist_str ) . '</span> &ndash; ' . $display_title;
+						$display_title = '<span class="track-artist">' . $track_artist_str . '</span> &ndash; ' . $display_title;
 					}
 
 					$tracklist_html .= '<tr style="border-bottom: 1px solid #eee;">';
@@ -618,5 +718,42 @@ class Discogs_Importer_Ajax {
 	 */
 	private function clean_artist_name( $name ) {
 		return preg_replace( '/\s\(\d+\)$/', '', $name );
+	}
+
+	/**
+	 * Ensures a WooCommerce global attribute taxonomy is registered and exists.
+	 *
+	 * @param string $slug Attribute slug.
+	 * @param string $name Attribute name.
+	 */
+	private function ensure_attribute_taxonomy( $slug, $name ) {
+		$taxonomy = 'pa_' . $slug;
+
+		if ( function_exists( 'wc_create_attribute' ) ) {
+			$attribute_id = wc_attribute_taxonomy_id_by_name( $slug );
+			if ( ! $attribute_id ) {
+				wc_create_attribute( array(
+					'name'         => $name,
+					'slug'         => $slug,
+					'type'         => 'select',
+					'order_by'     => 'menu_order',
+					'has_archives' => true,
+				) );
+			}
+		}
+
+		if ( ! taxonomy_exists( $taxonomy ) ) {
+			register_taxonomy(
+				$taxonomy,
+				array( 'product' ),
+				array(
+					'hierarchical' => false,
+					'label'        => $name,
+					'show_ui'      => false,
+					'query_var'    => true,
+					'rewrite'      => array( 'slug' => 'pa-' . $slug ),
+				)
+			);
+		}
 	}
 }

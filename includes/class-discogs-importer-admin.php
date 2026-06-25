@@ -42,6 +42,7 @@ class Discogs_Importer_Admin {
 	 */
 	public function register_settings() {
 		register_setting( 'discogs_importer_settings_group', 'discogs_importer_token' );
+		register_setting( 'discogs_importer_settings_group', 'discogs_importer_username' );
 		register_setting( 'discogs_importer_settings_group', 'discogs_importer_post_status' );
 		register_setting( 'discogs_importer_settings_group', 'discogs_importer_download_images' );
 		register_setting( 'discogs_importer_settings_group', 'discogs_importer_default_price' );
@@ -120,6 +121,7 @@ class Discogs_Importer_Admin {
 		}
 
 		$token           = get_option( 'discogs_importer_token', '' );
+		$username        = get_option( 'discogs_importer_username', '' );
 		$post_status     = get_option( 'discogs_importer_post_status', 'draft' );
 		$download_images = get_option( 'discogs_importer_download_images', '1' );
 		$default_price   = get_option( 'discogs_importer_default_price', '' );
@@ -147,6 +149,7 @@ class Discogs_Importer_Admin {
 			<!-- Tabs Navigation -->
 			<h2 class="nav-tab-wrapper discogs-tabs-nav">
 				<a href="#tab-search" class="nav-tab nav-tab-active" data-tab="search"><?php esc_html_e( 'Search & Import', 'discogs-importer' ); ?></a>
+				<a href="#tab-collection" class="nav-tab" data-tab="collection"><?php esc_html_e( 'My Collection', 'discogs-importer' ); ?></a>
 				<a href="#tab-settings" class="nav-tab" data-tab="settings"><?php esc_html_e( 'Settings', 'discogs-importer' ); ?></a>
 			</h2>
 
@@ -222,6 +225,43 @@ class Discogs_Importer_Admin {
 				</div>
 			</div>
 
+			<!-- Tab Content: Collection -->
+			<div id="discogs-tab-collection" class="discogs-tab-content">
+				<?php if ( empty( $token ) || empty( $username ) ) : ?>
+					<div class="discogs-alert discogs-alert-warning">
+						<p>
+							<strong><?php esc_html_e( 'Configuration Required!', 'discogs-importer' ); ?></strong>
+							<?php esc_html_e( 'Please go to the Settings tab and configure both your Discogs API Token and Discogs Username to load your collection.', 'discogs-importer' ); ?>
+						</p>
+					</div>
+				<?php endif; ?>
+
+				<div class="discogs-search-panel">
+					<div class="search-row search-actions-row" style="display: flex; gap: 15px;">
+						<button type="button" id="discogs-load-collection" class="button button-primary discogs-btn" <?php disabled( empty( $token ) || empty( $username ) ); ?>>
+							<span class="dashicons dashicons-album"></span> <?php esc_html_e( 'Load My Collection', 'discogs-importer' ); ?>
+						</button>
+						<button type="button" id="discogs-import-all-collection" class="button discogs-btn-secondary" style="display: none;">
+							<span class="dashicons dashicons-category"></span> <?php esc_html_e( 'Import All on Page', 'discogs-importer' ); ?>
+						</button>
+					</div>
+				</div>
+
+				<!-- Collection Results -->
+				<div class="discogs-collection-header" style="display: none; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #cbd5e1;">
+					<h3 id="discogs-collection-title"><?php esc_html_e( 'My Discogs Collection', 'discogs-importer' ); ?></h3>
+					<span id="discogs-collection-count" style="font-size: 13px; color: #475569; background: #f1f5f9; padding: 4px 10px; border-radius: 20px; font-weight: 500;"></span>
+				</div>
+				
+				<div id="discogs-collection-results" class="discogs-results-grid">
+					<!-- Dynamically Populated -->
+				</div>
+
+				<div id="discogs-collection-pagination" class="discogs-pagination" style="display: none;">
+					<!-- Dynamically Populated -->
+				</div>
+			</div>
+
 			<!-- Tab Content: Settings -->
 			<div id="discogs-tab-settings" class="discogs-tab-content">
 				<div class="discogs-settings-card">
@@ -238,6 +278,15 @@ class Discogs_Importer_Admin {
 										<?php esc_html_e( 'Create a Personal Access Token in your ', 'discogs-importer' ); ?>
 										<a href="https://www.discogs.com/settings/developers" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Discogs Developer Settings', 'discogs-importer' ); ?></a>.
 										<?php esc_html_e( 'This is required to access the Discogs search database.', 'discogs-importer' ); ?>
+									</p>
+								</td>
+							</tr>
+							<tr>
+								<th scope="row"><label for="discogs_importer_username"><?php esc_html_e( 'Discogs Username', 'discogs-importer' ); ?></label></th>
+								<td>
+									<input type="text" id="discogs_importer_username" name="discogs_importer_username" value="<?php echo esc_attr( $username ); ?>" class="regular-text" />
+									<p class="description">
+										<?php esc_html_e( 'Your Discogs username is required to load and import your personal collection folders.', 'discogs-importer' ); ?>
 									</p>
 								</td>
 							</tr>
