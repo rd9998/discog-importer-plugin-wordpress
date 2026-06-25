@@ -101,6 +101,14 @@ function discogs_importer_register_post_type()
 		'hierarchical' => false,
 		'show_in_rest' => true,
 	));
+
+	// Register Taxonomy: Record Released Date
+	register_taxonomy('record_released', 'discogs_record', array(
+		'label' => __('Released Dates', 'discogs-importer'),
+		'rewrite' => array('slug' => 'record-released'),
+		'hierarchical' => false,
+		'show_in_rest' => true,
+	));
 }
 
 add_action('init', 'discogs_importer_register_post_type');

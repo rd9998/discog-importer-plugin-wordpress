@@ -269,6 +269,33 @@ class Discogs_Importer_Ajax {
 		}
 		$format_name = ! empty( $formats ) ? implode( ', ', $formats ) : 'Vinyl';
 
+		// Parse genres and styles.
+		$genres = isset( $release['genres'] ) ? $release['genres'] : array();
+		$styles = isset( $release['styles'] ) ? $release['styles'] : array();
+
+		// Detect if it's a Hindi record.
+		$is_hindi_record = false;
+		if ( ! empty( $styles ) && is_array( $styles ) ) {
+			$hindi_keywords = array( 'hindustani', 'bollywood', 'ghazal', 'bhajan', 'devotional', 'carnatic', 'indian classical', 'qawwali', 'filmi' );
+			foreach ( $hindi_keywords as $keyword ) {
+				foreach ( $styles as $style ) {
+					if ( strpos( strtolower( $style ), $keyword ) !== false ) {
+						$is_hindi_record = true;
+						break 2;
+					}
+				}
+			}
+		}
+		if ( ! $is_hindi_record && isset( $release['country'] ) && strcasecmp( $release['country'], 'India' ) === 0 ) {
+			$is_hindi_record = true;
+		}
+
+		// If Hindi record, styles map to genres.
+		if ( $is_hindi_record ) {
+			$genres = array_unique( array_merge( $genres, $styles ) );
+			$styles = array(); // Clear styles since they are now genres!
+		}
+
 		// Format Title.
 		$post_title = $artist_name . ' - ' . $release['title'];
 
@@ -332,6 +359,68 @@ class Discogs_Importer_Ajax {
 			$tracklist_html .= '</tbody></table>';
 		}
 
+		// Construct Companies HTML.
+		$companies_html = '';
+		if ( ! empty( $release['companies'] ) && is_array( $release['companies'] ) ) {
+			$companies_html .= '<div class="discogs-companies" style="margin-top: 20px; margin-bottom: 20px;">';
+			$companies_html .= '<h3 class="discogs-companies-heading">' . esc_html__( 'Companies, etc.', 'discogs-importer' ) . '</h3>';
+			$companies_html .= '<ul class="discogs-companies-list" style="list-style: none; padding-left: 0; margin-top: 10px;">';
+			foreach ( $release['companies'] as $company ) {
+				$type = ! empty( $company['entity_type_name'] ) ? $company['entity_type_name'] : __( 'Company', 'discogs-importer' );
+				$name = preg_replace( '/\s\(\d+\)$/', '', $company['name'] );
+				
+				$companies_html .= '<li style="margin-bottom: 6px; border-bottom: 1px dashed #eee; padding-bottom: 4px; display: flex; justify-content: space-between; font-size: 14px;">';
+				$companies_html .= '<span class="company-type" style="color: #666; font-weight: 500;">' . esc_html( $type ) . '</span>';
+				$companies_html .= '<span class="company-name" style="font-weight: 600;">' . esc_html( $name ) . '</span>';
+				$companies_html .= '</li>';
+			}
+			$companies_html .= '</ul></div>';
+		}
+
+		// Construct Credits HTML.
+		$credits_html = '';
+		if ( ! empty( $release['extraartists'] ) && is_array( $release['extraartists'] ) ) {
+			$credits_html .= '<div class="discogs-credits" style="margin-top: 20px; margin-bottom: 20px;">';
+			$credits_html .= '<h3 class="discogs-credits-heading">' . esc_html__( 'Credits', 'discogs-importer' ) . '</h3>';
+			$credits_html .= '<ul class="discogs-credits-list" style="list-style: none; padding-left: 0; margin-top: 10px;">';
+			foreach ( $release['extraartists'] as $credit ) {
+				$role = ! empty( $credit['role'] ) ? $credit['role'] : __( 'Contributor', 'discogs-importer' );
+				$name = preg_replace( '/\s\(\d+\)$/', '', $credit['name'] );
+				
+				// Clean name and check if term link exists to make it clickable!
+				$taxonomy = ( 'product' === $target_post_type ) ? 'pa_artist' : 'record_artist';
+				
+				// Register pa_artist/record_artist if not exists
+				if ( 'pa_artist' === $taxonomy && ! taxonomy_exists( $taxonomy ) ) {
+					register_taxonomy( $taxonomy, array( 'product' ), array( 'hierarchical' => false ) );
+				}
+				
+				$term = get_term_by( 'name', $name, $taxonomy );
+				if ( ! $term ) {
+					$term_info = wp_insert_term( $name, $taxonomy );
+					if ( ! is_wp_error( $term_info ) && isset( $term_info['term_id'] ) ) {
+						$term = get_term( $term_info['term_id'], $taxonomy );
+					}
+				}
+				
+				$link = '';
+				if ( $term && ! is_wp_error( $term ) ) {
+					$term_link = get_term_link( $term, $taxonomy );
+					if ( ! is_wp_error( $term_link ) ) {
+						$link = $term_link;
+					}
+				}
+				
+				$name_html = ! empty( $link ) ? '<a href="' . esc_url( $link ) . '" style="color: var(--discogs-primary, #10b981); text-decoration: none; font-weight: 600;">' . esc_html( $name ) . '</a>' : '<span style="font-weight: 600;">' . esc_html( $name ) . '</span>';
+				
+				$credits_html .= '<li style="margin-bottom: 6px; border-bottom: 1px dashed #eee; padding-bottom: 4px; display: flex; justify-content: space-between; font-size: 14px;">';
+				$credits_html .= '<span class="credit-role" style="color: #666; font-weight: 500;">' . esc_html( $role ) . '</span>';
+				$credits_html .= '<span class="credit-name">' . $name_html . '</span>';
+				$credits_html .= '</li>';
+			}
+			$credits_html .= '</ul></div>';
+		}
+
 		// Construct Description.
 		$post_content = '';
 		if ( ! empty( $release['notes'] ) ) {
@@ -341,6 +430,8 @@ class Discogs_Importer_Ajax {
 			$post_content .= '</div>';
 		}
 		$post_content .= $tracklist_html;
+		$post_content .= $companies_html;
+		$post_content .= $credits_html;
 
 		// Create Post.
 		$post_data = array(
@@ -361,6 +452,7 @@ class Discogs_Importer_Ajax {
 		update_post_meta( $post_id, '_discogs_artist', $artist_name );
 		update_post_meta( $post_id, '_discogs_label', $label_name );
 		update_post_meta( $post_id, '_discogs_year', isset( $release['year'] ) ? $release['year'] : '' );
+		update_post_meta( $post_id, '_discogs_released', isset( $release['released'] ) ? $release['released'] : '' );
 		update_post_meta( $post_id, '_discogs_country', isset( $release['country'] ) ? $release['country'] : '' );
 		update_post_meta( $post_id, '_discogs_catalog_number', $catno );
 		update_post_meta( $post_id, '_discogs_format', $format_name );
@@ -370,10 +462,10 @@ class Discogs_Importer_Ajax {
 		// Process Taxonomies or Product Attributes.
 		if ( 'product' === $target_post_type ) {
 			// Handle WooCommerce Product Meta and Attributes.
-			$this->process_woocommerce_product( $post_id, $release, $all_artists, $label_name, $catno, $format_name, $default_price );
+			$this->process_woocommerce_product( $post_id, $release, $all_artists, $label_name, $catno, $format_name, $default_price, $genres, $styles );
 		} else {
 			// Handle Custom Post Type Taxonomies.
-			$this->process_custom_post_taxonomies( $post_id, $release, $all_artists, $labels, $formats );
+			$this->process_custom_post_taxonomies( $post_id, $release, $all_artists, $labels, $formats, $genres, $styles );
 		}
 
 		// Sideload Image.
@@ -413,7 +505,7 @@ class Discogs_Importer_Ajax {
 	/**
 	 * Setup and register WooCommerce global attributes and assign values.
 	 */
-	private function process_woocommerce_product( $product_id, $release, $artists, $label, $catno, $format, $default_price ) {
+	private function process_woocommerce_product( $product_id, $release, $artists, $label, $catno, $format, $default_price, $genres, $styles ) {
 		// Set WooCommerce meta.
 		update_post_meta( $product_id, '_visibility', 'visible' );
 		update_post_meta( $product_id, '_stock_status', 'instock' );
@@ -434,13 +526,14 @@ class Discogs_Importer_Ajax {
 
 		// We will map global product attributes.
 		$attributes_map = array(
-			'artist'  => array( 'name' => __( 'Artist', 'discogs-importer' ), 'values' => array() ),
-			'label'   => array( 'name' => __( 'Label', 'discogs-importer' ), 'values' => array() ),
-			'year'    => array( 'name' => __( 'Year', 'discogs-importer' ), 'values' => array() ),
-			'genre'   => array( 'name' => __( 'Genre', 'discogs-importer' ), 'values' => array() ),
-			'style'   => array( 'name' => __( 'Style', 'discogs-importer' ), 'values' => array() ),
-			'format'  => array( 'name' => __( 'Format', 'discogs-importer' ), 'values' => array() ),
-			'country' => array( 'name' => __( 'Country', 'discogs-importer' ), 'values' => array() ),
+			'artist'   => array( 'name' => __( 'Artist', 'discogs-importer' ), 'values' => array() ),
+			'label'    => array( 'name' => __( 'Label', 'discogs-importer' ), 'values' => array() ),
+			'year'     => array( 'name' => __( 'Year', 'discogs-importer' ), 'values' => array() ),
+			'released' => array( 'name' => __( 'Released', 'discogs-importer' ), 'values' => array() ),
+			'genre'    => array( 'name' => __( 'Genre', 'discogs-importer' ), 'values' => array() ),
+			'style'    => array( 'name' => __( 'Style', 'discogs-importer' ), 'values' => array() ),
+			'format'   => array( 'name' => __( 'Format', 'discogs-importer' ), 'values' => array() ),
+			'country'  => array( 'name' => __( 'Country', 'discogs-importer' ), 'values' => array() ),
 		);
 
 		// Extract Values.
@@ -453,11 +546,14 @@ class Discogs_Importer_Ajax {
 		if ( ! empty( $release['year'] ) ) {
 			$attributes_map['year']['values'][] = $release['year'];
 		}
-		if ( ! empty( $release['genres'] ) && is_array( $release['genres'] ) ) {
-			$attributes_map['genre']['values'] = $release['genres'];
+		if ( ! empty( $release['released'] ) ) {
+			$attributes_map['released']['values'][] = $release['released'];
 		}
-		if ( ! empty( $release['styles'] ) && is_array( $release['styles'] ) ) {
-			$attributes_map['style']['values'] = $release['styles'];
+		if ( ! empty( $genres ) ) {
+			$attributes_map['genre']['values'] = $genres;
+		}
+		if ( ! empty( $styles ) ) {
+			$attributes_map['style']['values'] = $styles;
 		}
 		if ( ! empty( $release['formats'] ) && is_array( $release['formats'] ) ) {
 			foreach ( $release['formats'] as $fmt ) {
@@ -529,8 +625,8 @@ class Discogs_Importer_Ajax {
 
 		// Attempt to set WooCommerce Product Category.
 		// If WooCommerce categories exist, add a "Vinyl" or first "Genre" category.
-		if ( ! empty( $release['genres'] ) && is_array( $release['genres'] ) ) {
-			$category_name = $release['genres'][0];
+		if ( ! empty( $genres ) && is_array( $genres ) ) {
+			$category_name = $genres[0];
 			$term = get_term_by( 'name', $category_name, 'product_cat' );
 			if ( ! $term ) {
 				$term = wp_insert_term( $category_name, 'product_cat' );
@@ -545,7 +641,7 @@ class Discogs_Importer_Ajax {
 	/**
 	 * Setup taxonomies for standard Custom Post Type.
 	 */
-	private function process_custom_post_taxonomies( $post_id, $release, $artists, $labels, $formats ) {
+	private function process_custom_post_taxonomies( $post_id, $release, $artists, $labels, $formats, $genres, $styles ) {
 		// Set Artists.
 		wp_set_object_terms( $post_id, $artists, 'record_artist', false );
 
@@ -553,17 +649,26 @@ class Discogs_Importer_Ajax {
 		wp_set_object_terms( $post_id, $labels, 'record_label', false );
 
 		// Set Genres.
-		if ( ! empty( $release['genres'] ) && is_array( $release['genres'] ) ) {
-			wp_set_object_terms( $post_id, $release['genres'], 'record_genre', false );
+		if ( ! empty( $genres ) ) {
+			wp_set_object_terms( $post_id, $genres, 'record_genre', false );
+		} else {
+			wp_delete_object_term_relationships( $post_id, 'record_genre' );
 		}
 
 		// Set Styles.
-		if ( ! empty( $release['styles'] ) && is_array( $release['styles'] ) ) {
-			wp_set_object_terms( $post_id, $release['styles'], 'record_style', false );
+		if ( ! empty( $styles ) ) {
+			wp_set_object_terms( $post_id, $styles, 'record_style', false );
+		} else {
+			wp_delete_object_term_relationships( $post_id, 'record_style' );
 		}
 
 		// Set Formats.
 		wp_set_object_terms( $post_id, $formats, 'record_format', false );
+
+		// Set Released.
+		if ( ! empty( $release['released'] ) ) {
+			wp_set_object_terms( $post_id, array( $release['released'] ), 'record_released', false );
+		}
 	}
 
 	/**
