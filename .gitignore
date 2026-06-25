@@ -1,0 +1,8 @@
+# Example .gitignore
+/vendor/
+/node_modules/
+.env
+.vscode/
+.idea/
+*.log
+.DS_Store
