@@ -131,4 +131,25 @@ class Discogs_Importer_API {
 
 		return self::make_request( 'releases/' . rawurlencode( $release_id ) );
 	}
+
+	/**
+	 * Get User's Collection Releases.
+	 *
+	 * @param string $username Discogs username.
+	 * @param int    $page     Page number.
+	 * @param int    $per_page Items per page.
+	 * @return array|WP_Error
+	 */
+	public static function get_collection( $username, $page = 1, $per_page = 12 ) {
+		if ( empty( $username ) ) {
+			return new WP_Error( 'invalid_username', __( 'Invalid Discogs Username.', 'discogs-importer' ) );
+		}
+
+		return self::make_request( 'users/' . rawurlencode( $username ) . '/collection/folders/0/releases', array(
+			'page'     => $page,
+			'per_page' => $per_page,
+			'sort'     => 'added',
+			'sort_order' => 'desc',
+		) );
+	}
 }
